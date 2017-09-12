@@ -1,0 +1,3 @@
+/usr/prakt/s156/cuda_ss17/Day1/Convolution/build_cmake/CMakeFiles/rebuild_cache.dir
+/usr/prakt/s156/cuda_ss17/Day1/Convolution/build_cmake/CMakeFiles/edit_cache.dir
+/usr/prakt/s156/cuda_ss17/Day1/Convolution/build_cmake/CMakeFiles/main.dir
