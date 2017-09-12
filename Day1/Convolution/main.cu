@@ -1,4 +1,4 @@
-Y
+
 // ###
 // ###
 // ### Practical Course: GPU Programming in Computer Vision
@@ -155,7 +155,7 @@ int main(int argc, char **argv)
     // ###
 
 	// create kernel	
-	int W=5;
+	int W=3;
 	float gKernel[W][W],copy_gKernel[W][W];
     float sigma=1.0;
 	float sum=0;
