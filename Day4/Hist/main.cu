@@ -9,14 +9,64 @@
 
 #include "helper.h"
 #include <iostream>
+#include <stdio.h>
 using namespace std;
 
 // uncomment to use the camera
 //#define CAMERA
 
+__global__ void histogram256(float* in, int* hist, int w, int h, int nc){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int idy = threadIdx.y + blockIdx.y*blockDim.y;
+    int idz = threadIdx.z + blockIdx.z*blockDim.z;
 
+    float intensity = 0;
 
+    if (idx+idy*w< w*h){
+       for (int j =0; j < nc; j++){
+            intensity += in[idx + w*idy + j*w*h]; 
+        }
+	intensity = intensity*(255.0/nc);   
+     
+        atomicAdd( &(hist[(int)intensity]), 1);  
+    }
+}
 
+__global__ void histogram256_shared(float* in, int* hist, int w, int h, int nc){
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int idy = threadIdx.y + blockIdx.y*blockDim.y;
+    int idz = threadIdx.z + blockIdx.z*blockDim.z;
+
+	__shared__ int hist_shared[256];
+
+	 if ( threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0){
+	for(int i=0 ; i<256 ; i++){
+        	hist_shared[i] = 0;
+			}
+    }
+	__syncthreads();
+	
+    float intensity = 0;
+
+    if (idx+idy*w< w*h){
+       for (int j =0; j < nc; j++){
+            intensity += in[idx + w*idy + j*w*h]; 
+        }
+	intensity = intensity*(255.0/nc);   
+     
+        atomicAdd( &(hist_shared[(int)intensity]), 1);  
+    }
+
+	__syncthreads();
+
+	if ( threadIdx.x == 0 && threadIdx.y == 0 ){
+		for(int i=0 ; i<256 ; i++){
+				//printf("%d\n",hist_shared[i]);
+			 	atomicAdd( &(hist[i]), hist_shared[i]);        	
+		}
+    }
+	__syncthreads();	
+}
 
 int main(int argc, char **argv)
 {
@@ -146,14 +196,51 @@ int main(int argc, char **argv)
 
 
 
-    Timer timer; timer.start();
+    
+    // ###
+    // ### Atomic Histogram Implementation
+	
+	float* g_imgIn;
+    int* g_hist256;
+	
+    cudaMalloc(&g_imgIn , w*h*nc*sizeof(float));
+    cudaMalloc(&g_hist256 , 256*sizeof(int));
+	
+	cudaMemset(g_hist256,0,256*sizeof(int));
+    cudaMemcpy(g_imgIn, imgIn , w*h*nc*sizeof(float) , cudaMemcpyHostToDevice);
+
+
+    dim3 block = dim3(32,32,1);
+    dim3 grid = dim3((w + block.x + 1)/block.x, (h + block.y + 1)/block.y, 1 );
+
+    Timer timer;
+    timer.start();
+    histogram256<<<grid, block>>>(g_imgIn, g_hist256 , w, h, nc);
+    timer.end();  
+    float t = timer.get();  // elapsed time in seconds
+    cout << "time global atomic: " << t*1000 << " ms" << endl;
+   
+    int* hist_global = new int[256];
+    cudaMemcpy(hist_global, g_hist256, 256*sizeof(int), cudaMemcpyDeviceToHost);
+    showHistogram256("Histogram Gloabal Memory" , hist_global, 100 + w, 100); 
+	
+	cudaMemset(g_hist256,0,256*sizeof(int));
+	
+	Timer timer1;
+    timer1.start();
+    histogram256_shared<<<grid, block>>>(g_imgIn, g_hist256 , w, h, nc);
+    timer1.end();  
+    float t1 = timer1.get();  // elapsed time in seconds
+    cout << "time share atomic: " << t1*1000 << " ms" << endl;
+   	int* hist_shared= new int[256];
+    cudaMemcpy(hist_shared, g_hist256, 256*sizeof(int), cudaMemcpyDeviceToHost);
+    showHistogram256("Histogram Shared Memory" , hist_shared, 100 + w, 250); 
+	    
+
+	// ### 
     // ###
     // ###
-    // ### TODO: Main computation
-    // ###
-    // ###
-    timer.end();  float t = timer.get();  // elapsed time in seconds
-    cout << "time: " << t*1000 << " ms" << endl;
+    
 
 
 
@@ -164,8 +251,8 @@ int main(int argc, char **argv)
     showImage("Input", mIn, 100, 100);  // show at position (x_from_left=100,y_from_above=100)
 
     // show output image: first convert to interleaved opencv format from the layered raw array
-    convert_layered_to_mat(mOut, imgOut);
-    showImage("Output", mOut, 100+w+40, 100);
+    //convert_layered_to_mat(mOut, imgOut);
+   // showImage("Output", mOut, 100+w+40, 100);
 
     // ### Display your own output images here as needed
 
