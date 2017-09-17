@@ -1,4 +1,3 @@
-
 // ###
 // ###
 // ### Practical Course: GPU Programming in Computer Vision
@@ -10,19 +9,83 @@
 
 #include "helper.h"
 #include <iostream>
-#include <stdio.h>
+#include<stdio.h>
 using namespace std;
 
 // uncomment to use the camera
 //#define CAMERA
+__host__ void XderivativeKernel(int width_kernel, float* gKernel){
 
+	for (int x=0;x<width_kernel;x++)
+	{
+	 	for(int y=0;y<width_kernel;y++)
+		{
+			if(x==0||x==width_kernel-1)
+				gKernel[x+y*width_kernel]=3/32.0;
+			else
+				gKernel[x+y*width_kernel]=10/32.0;
+			if(y==1)
+				gKernel[x+y*width_kernel]=0;
+			
+			if(y==0)
+				gKernel[x+y*width_kernel]=-gKernel[x+y*width_kernel];
+
+		}
+	}
+
+	
+}
+
+__host__ void  YderivativeKernel(int width_kernel, float*gKernel){
+
+	for (int x=0;x<width_kernel;x++)
+	{
+	 	for(int y=0;y<width_kernel;y++)
+		{
+			if(y==0||y==width_kernel-1)
+				gKernel[x+y*width_kernel]=3/32.0;
+			else
+				gKernel[x+y*width_kernel]=10/32.0;
+			
+			if(x==1)
+				gKernel[x+y*width_kernel]=0;
+			
+			if(x==0)
+				gKernel[x+y*width_kernel]=-gKernel[x+y*width_kernel];
+
+		}
+	}
+
+	
+}
+
+__global__ void computeM (float *in1,float *in2, float *m11,float *m12,float *m22, int w, int h)
+{
+	int ix = threadIdx.x + blockDim.x * blockIdx.x;//xaxis of imagein
+    int iy = threadIdx.y + blockDim.y * blockIdx.y;//yaxis of imagein
+    int iz = threadIdx.z + blockDim.z * blockIdx.z;	//channels imagein
+
+	int scale=10;
+	if (ix < w && iy <h && iz < 1){
+		int currentlocation0 = iz*w*h + ix + iy * w;
+		int currentlocation1 = 1*w*h + ix + iy * w;
+		int currentlocation2 = 2*w*h + ix + iy * w;
+
+		m11[currentlocation0]=(pow(in1[currentlocation0],2) +pow(in1[currentlocation1],2) + pow(in1[currentlocation2],2))*scale;
+		m22[currentlocation0]=(pow(in2[currentlocation0],2) +pow(in2[currentlocation1],2) + pow(in2[currentlocation2],2))*scale;
+		m12[currentlocation0]=(in1[currentlocation0]*in2[currentlocation0]+in1[currentlocation1]*in2[currentlocation1]+in1[currentlocation2]*in2[currentlocation2])*scale;
+
+	}
+}
 __global__ void convoluteGPU (float *in, float *out, int w, int h, int nc, float *kernel, int kernelRadius)
 {
 	int ix = threadIdx.x + blockDim.x * blockIdx.x;//xaxis of imagein
     int iy = threadIdx.y + blockDim.y * blockIdx.y;//yaxis of imagein
     int iz = threadIdx.z + blockDim.z * blockIdx.z;	//channels imagein
 	//printf("thread id check\n");
+	
 	int kernelWidth = 2 * kernelRadius + 1;
+	
     
     int currentlocation = iz*w*h + ix + iy * w;
     out[currentlocation]=0;
@@ -123,7 +186,7 @@ int main(int argc, char **argv)
     // ###
     cv::Mat mOut(h,w,mIn.type());  // mOut will have the same number of channels as the input image, nc layers
     //cv::Mat mOut(h,w,CV_32FC3);    // mOut will be a color image, 3 layers
-    //cv::Mat mOut_gray(h,w,CV_32FC1);    // mOut will be a grayscale image, 1 layer
+    cv::Mat mOut_gray(h,w,CV_32FC1);    // mOut will be a grayscale image, 1 layer
     // ### Define your own output images here as needed
 
 
@@ -139,10 +202,12 @@ int main(int argc, char **argv)
     float *imgIn = new float[(size_t)w*h*nc];
 
     // allocate raw output array (the computation result will be stored in this array, then later converted to mOut for displaying)
-	float *imgOut = new float[(size_t)w*h*mOut.channels()];
-	float *imgOutConvolutedCPU = new float[(size_t)w*h*mOut.channels()];
-	
-	    // For camera mode: Make a loop to read in camera frames
+    float *imgOut = new float[(size_t)w*h*mOut.channels()];
+
+
+
+
+    // For camera mode: Make a loop to read in camera frames
 #ifdef CAMERA
     // Read a camera image frame every 30 milliseconds:
     // cv::waitKey(30) waits 30 milliseconds for a keyboard input,
@@ -162,14 +227,7 @@ int main(int argc, char **argv)
     // But for CUDA it's better to work with layered images: rrr... ggg... bbb...
     // So we will convert as necessary, using interleaved "cv::Mat" for loading/saving/displaying, and layered "float*" for CUDA computations
     convert_mat_to_layered (imgIn, mIn);
-
-    
-    // ###
-    // ###
-    // ### TODO: Main computation
-    // ###
-    // ###
-
+	
 	// create kernel	
 	
 	
@@ -181,6 +239,9 @@ int main(int argc, char **argv)
 	float sum=0.0;
 	float sigmasquare_x2 = 2.0 * sigma * sigma;
 	float gKernel[width_kernel*width_kernel];
+	float v1Kernel[9];
+	float v2Kernel[9];
+
 	float mKernel=0.0;
 
 	for (int x=0;x<width_kernel;x++)
@@ -199,66 +260,62 @@ int main(int argc, char **argv)
         }													
 	
 	}
-	float copy_gKernel[width_kernel*width_kernel];
+	//float copy_gKernel[width_kernel*width_kernel];
     for(int i = 0; i < width_kernel; ++i)
     {
         for (int j = 0; j < width_kernel; ++j)
             {
 			gKernel[i+j*width_kernel]/=sum;
 			//cout<<gKernel[i+j*width_kernel]<<"\t";
-			copy_gKernel[i+j*width_kernel]=gKernel[i+j*width_kernel]/gKernel[width_kernel/2+(width_kernel/2)*width_kernel];
+			//copy_gKernel[i+j*width_kernel]=gKernel[i+j*width_kernel]/gKernel[width_kernel/2+(width_kernel/2)*width_kernel];
         }
 		//cout<<endl;
     }
 
-	 cv::Mat mOutKernel(width_kernel,width_kernel,CV_32FC1);
-    
-    convert_layered_to_mat(mOutKernel, copy_gKernel);
-    showImage("Gaussian Kernel", mOutKernel, 250, 100);
 	
-
-// apply convolution with clamping
-	Timer timer; timer.start();
-	for(int c=0; c<nc; c++) {
-		
-
-		for (int ix=0; ix<w; ix++) {
-		    for(int iy=0; iy<h; iy++) {
-
-				int currentlocation = h*w*c +ix+iy*w;
-
-		    	for (int x=0; x<width_kernel; x++) {
-					for(int y=0; y<width_kernel; y++) {
-
-						//clamping strategy
-					    int cx = max(min(w-1, ix + x - radius_kernel), 0);
-					    int cy = max(min(h-1, iy + y - radius_kernel), 0);
-
-						imgOutConvolutedCPU[currentlocation] += gKernel[x+y*width_kernel] * imgIn[h*w*c+cx+cy*w];
-	//cout<<imgOutConvolutedCPU[currentlocation]<<endl;
-					}
-				}
-			}
-		}
-	}
-	
-	 timer.end();  float t = timer.get();  // elapsed time in seconds
-    cout << "time on CPU: " << t*1000 << " ms" << endl;
-
-    convert_layered_to_mat(mOut, imgOutConvolutedCPU);
-    showImage("Output Convoluted CPU", mOut, 150, 100);
-	
-   //--Init for Cuda kernel call
-
 	float *imgOutConvolutedGPU = new float[(size_t)w*h*nc];
+	float *imgOutConvolutedGPU1 = new float[(size_t)w*h*nc];
+    float *imgOutConvolutedGPU2 = new float[(size_t)w*h*nc];
+
+	float *m11 = new float[(size_t)w*h];
+    float *m12 = new float[(size_t)w*h];
+	float *m22 = new float[(size_t)w*h];
+
+
+	float *m11_t = new float[(size_t)w*h];
+    float *m12_t = new float[(size_t)w*h];
+	float *m22_t = new float[(size_t)w*h];
+
     
+	float *M = new float[(size_t)w*h];
+
     float *g_imgIn;
     float *g_imgOut;
+	float *g_imgOut1;
+	float *g_imgOut2;
     float *g_gKernel;
+	float *g_v1Kernel;
+	float *g_v2Kernel;
     
+	float *g_m11,*g_m12,*g_m22;
+	float *g_ten_m11,*g_ten_m12,*g_ten_m22;
+
     cudaMalloc( &g_imgIn, w*h*nc * sizeof(float) );CUDA_CHECK;
     cudaMalloc( &g_imgOut, w*h*nc * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_imgOut1, w*h*nc * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_imgOut2, w*h*nc * sizeof(float) );CUDA_CHECK;
+
+	cudaMalloc( &g_m11, w*h*nc * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_m12, w*h*nc * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_m22, w*h*nc * sizeof(float) );CUDA_CHECK;
+
+	cudaMalloc( &g_ten_m11, w*h * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_ten_m12, w*h * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_ten_m22, w*h* sizeof(float) );CUDA_CHECK;
+
     cudaMalloc( &g_gKernel, width_kernel * width_kernel * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_v1Kernel, width_kernel * width_kernel * sizeof(float) );CUDA_CHECK;
+	cudaMalloc( &g_v2Kernel, width_kernel * width_kernel * sizeof(float) );CUDA_CHECK;
     
     cudaMemcpy( g_imgIn, imgIn, w*h*nc * sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK; 
     cudaMemcpy( g_gKernel, gKernel, width_kernel * width_kernel * sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK;
@@ -270,19 +327,130 @@ int main(int argc, char **argv)
 
 	Timer timer1; timer1.start();
 	convoluteGPU <<<Grid,Block>>> (g_imgIn, g_imgOut, w, h, nc, g_gKernel, radius_kernel);CUDA_CHECK;
-    timer1.end();  t = timer1.get();  // elapsed time in seconds
-    cout << "time on GPU: " << t*1000 << " ms" << endl;
+    timer1.end();  float t = timer1.get();  // elapsed time in seconds
+    cout << "time Convolution on GPU: " << t*1000 << " ms" << endl;
 
 	//copy output gpu->cpu
     cudaMemcpy(imgOutConvolutedGPU,g_imgOut, nc*h*w * sizeof(float), cudaMemcpyDeviceToHost );
     CUDA_CHECK;
-    
-    //free gpu allocation
     cudaFree(g_imgOut);
     CUDA_CHECK;
+	convert_layered_to_mat(mOut, imgOutConvolutedGPU);
+    showImage("Output Convoluted GPU", mOut, 200, 100);
+
+	//X Derivative
+	XderivativeKernel(3,v1Kernel);
+
+	/*  for(int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+            {
+			//gKernel[i+j*width_kernel]/=sum;
+			cout<<v1Kernel[i+j*3]<<"\t";
+			//copy_gKernel[i+j*width_kernel]=gKernel[i+j*width_kernel]/gKernel[width_kernel/2+(width_kernel/2)*width_kernel];
+        }
+		cout<<endl;
+    }*/
+
+	cudaMemcpy( g_v1Kernel, v1Kernel, width_kernel * width_kernel * sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK;
+	convoluteGPU <<<Grid,Block>>> (g_imgIn, g_imgOut1, w, h, nc,  g_v1Kernel, 1);CUDA_CHECK;
+	cudaMemcpy(imgOutConvolutedGPU1,g_imgOut1, nc*h*w * sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
+    
+	convert_layered_to_mat(mOut, imgOutConvolutedGPU1);
+    showImage("Output Xderivative GPU", mOut, 200, 100);
+
+
+	//Y Derivative
+	YderivativeKernel(3,v2Kernel);
+	cudaMemcpy( g_v2Kernel, v2Kernel, width_kernel * width_kernel * sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK;
+	convoluteGPU <<<Grid,Block>>> (g_imgIn, g_imgOut2, w, h, nc, g_v2Kernel, 1);CUDA_CHECK;
+	cudaMemcpy(imgOutConvolutedGPU2,g_imgOut2, nc*h*w * sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
+    
+	convert_layered_to_mat(mOut, imgOutConvolutedGPU2);
+    showImage("Output Yderivative GPU", mOut, 200, 100);
+	cudaFree(g_v1Kernel);
+    CUDA_CHECK;
+	cudaFree(g_v2Kernel);
+    CUDA_CHECK;
+
+	computeM<<<Grid,Block>>> (g_imgOut1,g_imgOut2, g_m11,g_m12,g_m22, w, h);
+	
+	cudaMemcpy(m11,g_m11, h*w * sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
+	cudaMemcpy(m12,g_m12,h*w * sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
+	cudaMemcpy(m22,g_m22, h*w * sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
+	/*for (int i=0;i<w;i++){
+		for(int j=0;j<h;j++){
+				//M[i + j * w]=m11_t[i + j * w]+m12_t[i + j * w]+m22_t[i + j * w];		
+
+			cout<<	m22[i + j * w]<<endl;
+		}
+	}*/
+
+	cudaFree(g_imgOut1);
+    CUDA_CHECK;
+
+	cudaFree(g_imgOut2);
+    CUDA_CHECK;
+	convert_layered_to_mat(mOut_gray, m11);
+    showImage("Output m11 GPU", mOut_gray, 200, 100);
+
+	convert_layered_to_mat(mOut_gray, m22);
+    showImage("Output m22 GPU", mOut_gray, 200, 100);
+
+	convert_layered_to_mat(mOut_gray, m12);
+    showImage("Output m12 GPU", mOut_gray, 200, 100);
+
+	convoluteGPU <<<Grid,Block>>> (g_m11, g_ten_m11, w, h,1, g_gKernel, radius_kernel);CUDA_CHECK;
+	cudaMemcpy(m11_t, g_ten_m11, h*w*sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
+	cudaFree(g_ten_m11);CUDA_CHECK;
+
+	convoluteGPU <<<Grid,Block>>> (g_m12, g_ten_m12, w, h,1, g_gKernel, radius_kernel);CUDA_CHECK;
+	convoluteGPU <<<Grid,Block>>> (g_m22, g_ten_m22, w, h,1, g_gKernel, radius_kernel);CUDA_CHECK;
+	
+	
+	cudaMemcpy(m12_t,g_ten_m12,h*w * sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
+	cudaMemcpy(m22_t,g_ten_m22, h*w * sizeof(float), cudaMemcpyDeviceToHost );
+   	CUDA_CHECK;
+
+	for (int i=0;i<w;i++){
+		for(int j=0;j<h;j++){
+				M[i + j * w]=m11_t[i + j * w]+m12_t[i + j * w]+m22_t[i + j * w];		
+
+			//cout<<	m22_t[i + j * w]<<endl;
+		}
+	}
+
+	convert_layered_to_mat(mOut_gray, m11_t);
+   showImage("Output Tensor m11 GPU", mOut_gray, 200, 100);
+
+	convert_layered_to_mat(mOut_gray, m22_t);
+    showImage("Output Tensor m22 GPU", mOut_gray, 200, 100);
+
+	convert_layered_to_mat(mOut_gray, m12_t);
+    showImage("Output Tensor m12 GPU", mOut_gray, 200, 100);
+	
+	convert_layered_to_mat(mOut_gray, M);
+    showImage("Output M", mOut_gray, 200, 100);
+
+    //free gpu allocation
+    
     cudaFree(g_imgIn);
     CUDA_CHECK;
     cudaFree(g_gKernel);
+    CUDA_CHECK;
+	
+	cudaFree(g_m11);
+    CUDA_CHECK;
+	cudaFree(g_m12);
+    CUDA_CHECK;
+	cudaFree(g_m22);
     CUDA_CHECK;
 
 	convert_layered_to_mat(mOut, imgOutConvolutedGPU);
@@ -290,6 +458,17 @@ int main(int argc, char **argv)
 
 	convert_layered_to_mat(mOut, imgIn);
     showImage("Input Image", mOut, 250, 100);
+
+
+
+
+	
+	// convert_layered_to_mat(mOut, imgOut_conv1);
+   // showImage("Output1", mOut, 100+w+40, 100);
+	// convert_layered_to_mat(mOut, imgOut_conv2);
+   // showImage("Output2", mOut, 100+w+40, 100);
+
+    // ### Display your own output images here as needed
 
 #ifdef CAMERA
     // end of camera loop
@@ -309,6 +488,17 @@ int main(int argc, char **argv)
     // free allocated arrays
     delete[] imgIn;
     delete[] imgOut;
+	delete[] m11;
+	delete[] m12;
+	delete[] m22;
+
+	delete[] m11_t;
+	delete[] m12_t;
+	delete[] m22_t;
+
+	delete[] imgOutConvolutedGPU;
+	delete[] imgOutConvolutedGPU1;
+    delete[] imgOutConvolutedGPU2;
 
     // close all opencv windows
     cvDestroyAllWindows();

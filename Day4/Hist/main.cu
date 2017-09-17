@@ -14,58 +14,9 @@ using namespace std;
 // uncomment to use the camera
 //#define CAMERA
 
-__device__ float square(float a){return a*a;}
 
-__global__ void cuda_gradient(float* d_imgIn,float* d_imgOut_gradx,float* d_imgOut_grady, int n, int h, int w)
-{
- int idx = threadIdx.x + blockDim.x * blockIdx.x;
- 		
- 
- if(idx+1<n && (idx+1)%w!=0){
-		d_imgOut_gradx[idx]=d_imgIn[idx+1]-d_imgIn[idx];
-		
-	}
 
-	else {
-		d_imgOut_gradx[idx]=0;//d_imgIn[idx];
-		}
- if (idx+w <n){
-	d_imgOut_grady[idx]=d_imgIn[idx+w]-d_imgIn[idx];
-	}
 
- else {
-		d_imgOut_grady[idx]=0;}//d_imgIn[idx];}
-
-}
-
-__global__ void cuda_divergence(float* d_imgOut_gradx,float* d_imgOut_grady, float* d_imgOut_div,int n, int h, int w)
-{
- int idx = threadIdx.x + blockDim.x * blockIdx.x;
- 		
- 
- if(idx+1<n && (idx+1)%w!=0){
-		d_imgOut_div[idx]=d_imgOut_gradx[idx+1]-d_imgOut_gradx[idx];
-}
- else 
-		d_imgOut_div[idx]=d_imgOut_gradx[idx];
-
- if(idx+w <n){
-		d_imgOut_div[idx]+=(d_imgOut_grady[idx+w]-d_imgOut_grady[idx]);
-}
- else 
-		d_imgOut_div[idx]+=d_imgOut_grady[idx];
-}
-
-__global__ void cuda_l2(float* d_imgIn,float* d_imgOut_l2, int n, int h, int w,int nc)
-{
- int idx = threadIdx.x + blockDim.x * blockIdx.x;
- 		
- 
- if(idx<n/nc){
-		d_imgOut_l2[idx]=sqrtf(square(d_imgIn[idx])+square(d_imgIn[h*w+idx])+square(d_imgIn[2*h*w+idx]));
-}
- 
-}
 
 int main(int argc, char **argv)
 {
@@ -146,11 +97,9 @@ int main(int argc, char **argv)
     // ### TODO: Change the output image format as needed
     // ###
     // ###
-    cv::Mat mOut(h,w,mIn.type()); 
-	
-	 // mOut will have the same number of channels as the input image, nc layers
+    cv::Mat mOut(h,w,mIn.type());  // mOut will have the same number of channels as the input image, nc layers
     //cv::Mat mOut(h,w,CV_32FC3);    // mOut will be a color image, 3 layers
-    cv::Mat mOut_gray(h,w,CV_32FC1);    // mOut will be a grayscale image, 1 layer
+    //cv::Mat mOut(h,w,CV_32FC1);    // mOut will be a grayscale image, 1 layer
     // ### Define your own output images here as needed
 
 
@@ -166,12 +115,10 @@ int main(int argc, char **argv)
     float *imgIn = new float[(size_t)w*h*nc];
 
     // allocate raw output array (the computation result will be stored in this array, then later converted to mOut for displaying)
-	float *imgOut_l2 = new float[(size_t)w*h*mOut.channels()];
-    float *imgOut_gradx = new float[(size_t)w*h*mOut.channels()];
-	float *imgOut_grady = new float[(size_t)w*h*mOut.channels()];
-	
-	float *imgOut_div = new float[(size_t)w*h*mOut.channels()];
-	
+    float *imgOut = new float[(size_t)w*h*mOut.channels()];
+
+
+
 
     // For camera mode: Make a loop to read in camera frames
 #ifdef CAMERA
@@ -194,53 +141,22 @@ int main(int argc, char **argv)
     // So we will convert as necessary, using interleaved "cv::Mat" for loading/saving/displaying, and layered "float*" for CUDA computations
     convert_mat_to_layered (imgIn, mIn);
 
-	//----GPU----//
-	float* d_imgIn,*d_imgOut_gradx, *d_imgOut_grady, *d_imgOut_div,*d_imgOut_l2;
-	
-	cudaMalloc(&d_imgIn,h*w*nc*sizeof(float));
-	CUDA_CHECK;
-	cudaMalloc(&d_imgOut_l2,h*w*nc*sizeof(float));
-	CUDA_CHECK;
-	cudaMalloc(&d_imgOut_gradx,h*w*nc*sizeof(float));
-	CUDA_CHECK;
-	cudaMalloc(&d_imgOut_grady,h*w*nc*sizeof(float));
-	CUDA_CHECK;
-	cudaMalloc(&d_imgOut_div,h*w*nc*sizeof(float));
-	CUDA_CHECK;
-	
-		
 
-	cudaMemcpy( d_imgIn, imgIn, h*w*nc* sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK;
-	
-	dim3 block = dim3(256,1,1);
-	dim3 grid = dim3(((h*w*nc)+block.x-1)/block.x,1,1);	
-	
 
-	Timer timer_cuda; timer_cuda.start();
+
+
+
+    Timer timer; timer.start();
     // ###
     // ###
     // ### TODO: Main computation
-	for(int rep=0;rep<1;rep++)
-	{
-		cuda_gradient<<<grid,block>>>(d_imgIn,d_imgOut_gradx,d_imgOut_grady,h*w*nc,h,w);
-		cuda_divergence<<<grid,block>>>(d_imgOut_gradx,d_imgOut_grady, d_imgOut_div,h*w*nc,h,w);
-		cuda_l2<<<grid,block>>>(d_imgOut_div,d_imgOut_l2,h*w*nc, h, w, nc);
-	}
     // ###
     // ###
-    timer_cuda.end();  float t_cuda = timer_cuda.get(); 
-	cout << "time on GPU: " << t_cuda*1000 << " ms" << endl;
+    timer.end();  float t = timer.get();  // elapsed time in seconds
+    cout << "time: " << t*1000 << " ms" << endl;
 
 
-	cudaMemcpy( imgOut_l2, d_imgOut_l2, h*w * sizeof(float), cudaMemcpyDeviceToHost );CUDA_CHECK;
-	cudaMemcpy( imgOut_gradx, d_imgOut_gradx, h*w*nc * sizeof(float), cudaMemcpyDeviceToHost );CUDA_CHECK;
-	cudaMemcpy( imgOut_grady, d_imgOut_grady, h*w*nc * sizeof(float), cudaMemcpyDeviceToHost );CUDA_CHECK;
-	cudaMemcpy( imgOut_div, d_imgOut_div, h*w*nc * sizeof(float), cudaMemcpyDeviceToHost );CUDA_CHECK;
-	
-	cudaFree(d_imgOut_grady);CUDA_CHECK;
-	cudaFree(d_imgOut_gradx);CUDA_CHECK;
-	cudaFree(d_imgOut_div);CUDA_CHECK;
-	cudaFree(d_imgIn);CUDA_CHECK;
+
 
 
 
@@ -248,16 +164,9 @@ int main(int argc, char **argv)
     showImage("Input", mIn, 100, 100);  // show at position (x_from_left=100,y_from_above=100)
 
     // show output image: first convert to interleaved opencv format from the layered raw array
-    convert_layered_to_mat(mOut, imgOut_gradx);
-    showImage("Output Gradx", mOut, 100+w+40, 100);
-	convert_layered_to_mat(mOut, imgOut_grady);
-    showImage("Output Grady", mOut, 100+2*w+80, 100);
+    convert_layered_to_mat(mOut, imgOut);
+    showImage("Output", mOut, 100+w+40, 100);
 
-	convert_layered_to_mat(mOut, imgOut_div);
-    showImage("Output Div", mOut, 100+w+40, 200);
-	
-	convert_layered_to_mat(mOut_gray, imgOut_l2);
-    showImage("Output l2", mOut_gray, 100, 200);
     // ### Display your own output images here as needed
 
 #ifdef CAMERA
@@ -277,10 +186,8 @@ int main(int argc, char **argv)
 
     // free allocated arrays
     delete[] imgIn;
-    delete[] imgOut_gradx;
-	delete[] imgOut_grady;
-	delete[] imgOut_div;
-	
+    delete[] imgOut;
+
     // close all opencv windows
     cvDestroyAllWindows();
     return 0;

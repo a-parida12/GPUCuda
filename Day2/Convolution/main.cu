@@ -1,4 +1,3 @@
-
 // ###
 // ###
 // ### Practical Course: GPU Programming in Computer Vision
@@ -10,37 +9,87 @@
 
 #include "helper.h"
 #include <iostream>
-#include <stdio.h>
 using namespace std;
-
+#include<stdio.h>
 // uncomment to use the camera
 //#define CAMERA
 
-__global__ void convoluteGPU (float *in, float *out, int w, int h, int nc, float *kernel, int kernelRadius)
+
+
+__global__ void cuda_convolution_shared ( float *in, float *out, int w, int h, int nc, float *kernel, int r)
 {
+
+
 	int ix = threadIdx.x + blockDim.x * blockIdx.x;//xaxis of imagein
     int iy = threadIdx.y + blockDim.y * blockIdx.y;//yaxis of imagein
     int iz = threadIdx.z + blockDim.z * blockIdx.z;	//channels imagein
-	//printf("thread id check\n");
-	int kernelWidth = 2 * kernelRadius + 1;
+	int kernelWidth = 2 * r + 1;	
+	int currentlocation = iz*w*h + ix + iy * w;
+	out[currentlocation]=0;
+
+	extern __shared__ float shmem[];
+
+	int bx=blockDim.x;
+	int by=blockDim.y;
+
+	int shmem_width= bx + 2 * r;
+	int shmem_height=by + 2 * r;
+	
+	for( int i = threadIdx.x + threadIdx.y * bx; i < shmem_width * shmem_height ; i = i + bx * by) {   
+        int shw = i % shmem_width;
+        int shh = i / shmem_height;
+      
+       
+        shmem[i] = in[max(min(w-1, -r + bx * blockIdx.x + shw), 0) + max(min(h-1, -r + by* blockIdx.y + shh), 0) * w + iz*w*h];
+    }
+    __syncthreads();
+
+	if (ix<w && iy<h && iz < nc){ 
+        for (int x=0; x<kernelWidth; x++) {
+            for(int y=0; y<kernelWidth; y++) {
+                                
+                out[currentlocation] += kernel[x + y * kernelWidth] * shmem[threadIdx.x+x+ (threadIdx.y+y) * shmem_width];
+            }
+        }
+
+        __syncthreads();
+
+    }
+
+}
+
+#define kernelsize 100
+__constant__ float kernel_const[kernelsize];
+texture<float,2,cudaReadModeElementType>texRef;
+
+__global__ void cuda_convolution_texture_constantKernel( float *in, float *out, int w, int h, int nc, int r){
+
+	int ix = threadIdx.x + blockDim.x * blockIdx.x;//xaxis of imagein
+    int iy = threadIdx.y + blockDim.y * blockIdx.y;//yaxis of imagein
+    int iz = threadIdx.z + blockDim.z * blockIdx.z;	//channels imagein
+	
+	int kernelWidth = 2 * r + 1;
     
     int currentlocation = iz*w*h + ix + iy * w;
     out[currentlocation]=0;
-	//printf("current location check\n");
+	
 	if (ix < w && iy <h && iz < nc){ 
-
+	
 		for (int x=0; x<kernelWidth; x++) {
 			for(int y=0; y<kernelWidth; y++) {
 
-				int cx = max(min(w-1, ix + x - kernelRadius), 0);
-				int cy = max(min(h-1, iy + y - kernelRadius), 0);
-
-				out[currentlocation] += kernel[x+y*kernelWidth] * in[iz*w*h+cx+cy*w];
+				int cx = max(min(w-1, ix + x - r), 0);
+				int cy = max(min(h-1, iy + y - r), 0);
+				float val = tex2D(texRef, cx+0.5f, iz*h+cy+0.5f); 
+				
+				if( x+y*kernelWidth <kernelsize) {
+                    out[currentlocation] += kernel_const[x+y*kernelWidth] * val;
+                }	
 			}
 		}
 	}
-}
 
+}
 
 int main(int argc, char **argv)
 {
@@ -123,7 +172,7 @@ int main(int argc, char **argv)
     // ###
     cv::Mat mOut(h,w,mIn.type());  // mOut will have the same number of channels as the input image, nc layers
     //cv::Mat mOut(h,w,CV_32FC3);    // mOut will be a color image, 3 layers
-    //cv::Mat mOut_gray(h,w,CV_32FC1);    // mOut will be a grayscale image, 1 layer
+    //cv::Mat mOut(h,w,CV_32FC1);    // mOut will be a grayscale image, 1 layer
     // ### Define your own output images here as needed
 
 
@@ -139,10 +188,12 @@ int main(int argc, char **argv)
     float *imgIn = new float[(size_t)w*h*nc];
 
     // allocate raw output array (the computation result will be stored in this array, then later converted to mOut for displaying)
-	float *imgOut = new float[(size_t)w*h*mOut.channels()];
-	float *imgOutConvolutedCPU = new float[(size_t)w*h*mOut.channels()];
-	
-	    // For camera mode: Make a loop to read in camera frames
+    float *imgOut = new float[(size_t)w*h*mOut.channels()];
+
+
+
+
+    // For camera mode: Make a loop to read in camera frames
 #ifdef CAMERA
     // Read a camera image frame every 30 milliseconds:
     // cv::waitKey(30) waits 30 milliseconds for a keyboard input,
@@ -163,15 +214,7 @@ int main(int argc, char **argv)
     // So we will convert as necessary, using interleaved "cv::Mat" for loading/saving/displaying, and layered "float*" for CUDA computations
     convert_mat_to_layered (imgIn, mIn);
 
-    
-    // ###
-    // ###
-    // ### TODO: Main computation
-    // ###
-    // ###
-
 	// create kernel	
-	
 	
     float sigma=1.0;
 
@@ -199,59 +242,18 @@ int main(int argc, char **argv)
         }													
 	
 	}
-	float copy_gKernel[width_kernel*width_kernel];
+	
     for(int i = 0; i < width_kernel; ++i)
-    {
         for (int j = 0; j < width_kernel; ++j)
-            {
 			gKernel[i+j*width_kernel]/=sum;
-			//cout<<gKernel[i+j*width_kernel]<<"\t";
-			copy_gKernel[i+j*width_kernel]=gKernel[i+j*width_kernel]/gKernel[width_kernel/2+(width_kernel/2)*width_kernel];
-        }
-		//cout<<endl;
-    }
+       
 
-	 cv::Mat mOutKernel(width_kernel,width_kernel,CV_32FC1);
-    
-    convert_layered_to_mat(mOutKernel, copy_gKernel);
-    showImage("Gaussian Kernel", mOutKernel, 250, 100);
-	
 
-// apply convolution with clamping
-	Timer timer; timer.start();
-	for(int c=0; c<nc; c++) {
-		
+ 	//----CUDA IMPLEMENTATION BEGINS----//
 
-		for (int ix=0; ix<w; ix++) {
-		    for(int iy=0; iy<h; iy++) {
+	float *imgOutConvolutedGPU_shared = new float[(size_t)w*h*nc];
+    float *imgOutConvolutedGPU_texture = new float[(size_t)w*h*nc];
 
-				int currentlocation = h*w*c +ix+iy*w;
-
-		    	for (int x=0; x<width_kernel; x++) {
-					for(int y=0; y<width_kernel; y++) {
-
-						//clamping strategy
-					    int cx = max(min(w-1, ix + x - radius_kernel), 0);
-					    int cy = max(min(h-1, iy + y - radius_kernel), 0);
-
-						imgOutConvolutedCPU[currentlocation] += gKernel[x+y*width_kernel] * imgIn[h*w*c+cx+cy*w];
-	//cout<<imgOutConvolutedCPU[currentlocation]<<endl;
-					}
-				}
-			}
-		}
-	}
-	
-	 timer.end();  float t = timer.get();  // elapsed time in seconds
-    cout << "time on CPU: " << t*1000 << " ms" << endl;
-
-    convert_layered_to_mat(mOut, imgOutConvolutedCPU);
-    showImage("Output Convoluted CPU", mOut, 150, 100);
-	
-   //--Init for Cuda kernel call
-
-	float *imgOutConvolutedGPU = new float[(size_t)w*h*nc];
-    
     float *g_imgIn;
     float *g_imgOut;
     float *g_gKernel;
@@ -259,37 +261,65 @@ int main(int argc, char **argv)
     cudaMalloc( &g_imgIn, w*h*nc * sizeof(float) );CUDA_CHECK;
     cudaMalloc( &g_imgOut, w*h*nc * sizeof(float) );CUDA_CHECK;
     cudaMalloc( &g_gKernel, width_kernel * width_kernel * sizeof(float) );CUDA_CHECK;
-    
-    cudaMemcpy( g_imgIn, imgIn, w*h*nc * sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK; 
+
+	cudaMemcpy( g_imgIn, imgIn, w*h*nc * sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK; 
     cudaMemcpy( g_gKernel, gKernel, width_kernel * width_kernel * sizeof(float), cudaMemcpyHostToDevice );CUDA_CHECK;
+   
+   
     
-    dim3 Block = dim3(32,32,1);
-    dim3 Grid = dim3((w +Block.x -1) / Block.x, (h + Block.y -1) / Block.y, (nc+ Block.z -1) / Block.z);
-    				
-	//call cuda kernel for convolution
+    int blockLength = 32;
+    
+    dim3 Block = dim3(blockLength,blockLength,1);
+    dim3 Grid = dim3((w + Block.x -1) / Block.x, (h + Block.y -1) / Block.y, (nc + Block.z -1) / Block.z);
+    							
+    // shared memory							
+    int sharedMemoryLength = width_kernel + blockLength -1;
+   	size_t smBytes = sharedMemoryLength * sharedMemoryLength * sizeof(float);
+	
+	Timer timer; timer.start();
+    cuda_convolution_shared <<<Grid,Block,smBytes>>> (g_imgIn, g_imgOut, w, h, nc, g_gKernel,radius_kernel);
+    timer.end();  float t = timer.get();  // elapsed time in seconds
+    cout << "time Shared Convolution on GPU: " << t*1000 << " ms" << endl;
+    
+    cudaMemcpy( imgOutConvolutedGPU_shared, g_imgOut, w*h*nc * sizeof(float), cudaMemcpyDeviceToHost );
+    CUDA_CHECK;
 
-	Timer timer1; timer1.start();
-	convoluteGPU <<<Grid,Block>>> (g_imgIn, g_imgOut, w, h, nc, g_gKernel, radius_kernel);CUDA_CHECK;
-    timer1.end();  t = timer1.get();  // elapsed time in seconds
-    cout << "time on GPU: " << t*1000 << " ms" << endl;
+	 convert_layered_to_mat(mOut, imgOutConvolutedGPU_shared);
+    showImage("Output Convoluted GPU Shared Memory", mOut, 200, 120);
 
-	//copy output gpu->cpu
-    cudaMemcpy(imgOutConvolutedGPU,g_imgOut, nc*h*w * sizeof(float), cudaMemcpyDeviceToHost );
+	// initialize texture memory
+    texRef.addressMode[0] = cudaAddressModeClamp; // clamp x to border
+    texRef.addressMode[1] = cudaAddressModeClamp; // clamp y to border
+    texRef.filterMode = cudaFilterModeLinear; // linear interpolation
+    texRef.normalized = false; // access as (x+0.5f,y+0.5f), not as ((x+0.5f)/w,(y+0.5f)/h)
+    cudaChannelFormatDesc desc = cudaCreateChannelDesc<float>();
+    cudaBindTexture2D(NULL, &texRef, g_imgIn, &desc, w, h*nc, w*sizeof(g_imgIn[0]));
+    CUDA_CHECK;
+	
+
+	// copying the kernel to constant memory
+
+	cudaMemcpyToSymbol (kernel_const, gKernel, width_kernel * width_kernel * sizeof(float));CUDA_CHECK;
+
+	timer.start();
+    cuda_convolution_texture_constantKernel <<<Grid,Block>>> (g_imgIn, g_imgOut, w, h, nc,radius_kernel);
+    timer.end(); t = timer.get();  // elapsed time in seconds
+    cout << "time texure Convolution on GPU: " << t*1000 << " ms" << endl;
+    
+    cudaMemcpy( imgOutConvolutedGPU_texture, g_imgOut, w*h*nc * sizeof(float), cudaMemcpyDeviceToHost );
     CUDA_CHECK;
     
-    //free gpu allocation
-    cudaFree(g_imgOut);
-    CUDA_CHECK;
-    cudaFree(g_imgIn);
-    CUDA_CHECK;
-    cudaFree(g_gKernel);
-    CUDA_CHECK;
+   convert_layered_to_mat(mOut, imgOutConvolutedGPU_texture);
+    showImage("Output Convoluted GPU Texture Memory and Constant kernel", mOut, 150, 120);
+	//----CUDA Implementation ends here---//
+	
 
-	convert_layered_to_mat(mOut, imgOutConvolutedGPU);
-    showImage("Output Convoluted GPU", mOut, 200, 100);
+    // show input image
+    showImage("Input", mIn, 100, 120);  // show at position (x_from_left=100,y_from_above=100)
 
-	convert_layered_to_mat(mOut, imgIn);
-    showImage("Input Image", mOut, 250, 100);
+    
+    
+    // ### Display your own output images here as needed
 
 #ifdef CAMERA
     // end of camera loop
@@ -308,7 +338,7 @@ int main(int argc, char **argv)
 
     // free allocated arrays
     delete[] imgIn;
-    delete[] imgOut;
+    delete[] imgOutConvolutedGPU_shared;
 
     // close all opencv windows
     cvDestroyAllWindows();
