@@ -1,1 +1,53 @@
-Please run the script files in the particular folder of each day.
+# GPU Programming in Computer Vision SS2017
+
+///////////////////////////////////////////////////////////////////////////////////////////
+INSTRUCTIONS TO SEE RESULT
+///////////////////////////////////////////////////////////////////////////////////////////
+
+*Please run the script files in the particular folder of each day.
+*All answers regarding the run time will be printed on terminal.
+*No images are stored in system.
+
+
+////////////////////////////////////////////////////////////////////////////////////////////
+ANSWERS TO IN TEXT QUESTION
+////////////////////////////////////////////////////////////////////////////////////////////
+
+*Day 1
+    *Exercise 1: Check CUDA and the installed GPU
+        1. CUDA VERSION: v8.0.44
+        2. a) Name: GeForce GTX 1050Ti; Compute Capability: 6.1
+           b) No. of Multiprocessor: 6; CUDA Core :128
+           c) Global Memory: 4038 Mb
+           d) Max. Register:65536; shared memory/block :49152 b
+    -----------------------------------------------------------------------------------------
+    *Exercise 2: Gamma Correction
+        3. The GPU version runs much faster at almost 300x
+    -----------------------------------------------------------------------------------------
+    *Exercise 5: Convolution
+        5. sigma      1       2            3          4            5
+           CPU(ms)  476.4   1684.37     3547.31     6088.47     9144.34
+           GPU(ms)  1.743   4.8800      10.104      17.784      26.919
+    -----------------------------------------------------------------------------------------
+
+*Day 2
+    *Exercise 6: Convolution- Shared Memory Speedup
+        5. sigma=1 runtime on shared= 1.473 ms; runtime on texture=1.823 ms
+           As expected the shared memory is faster than by texture memory by 26%
+    ------------------------------------------------------------------------------------------
+
+*Day 3
+    *Exercise 9: Isotropic Diffusion
+        6. large tau: for small N the blur takes place faster due to more diffusion
+           large N: the diffusion takes place more and edges are blurred out first
+        7. There is no visually noticeable change
+    -------------------------------------------------------------------------------------------
+
+*Day 4
+    *Exercise 15: Histograms
+        3. In general shared memory should be faster but a lot of overhead in form of
+           setting and copying back values from the shared memory to global memory atomically
+           makes the process inefficient.
+
+    --------------------------------------------------------------------------------------------
+////////////////////////////////////////////////////////////////////////////////////////////////
