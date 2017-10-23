@@ -1,16 +1,8 @@
-#
-#
-# Practical Course: GPU Programming in Computer Vision
-#
-#
-# Technical University Munich, Computer Vision Group
-# Winter Semester 2015/2016, March 15 - April 15
-#
-#
-
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8.9)
 FIND_PACKAGE(CUDA REQUIRED)
 FIND_PACKAGE(OpenCV REQUIRED)
-CUDA_ADD_EXECUTABLE(main main.cu helper.cu)
-TARGET_LINK_LIBRARIES(main ${OpenCV_LIBS})
+CUDA_ADD_EXECUTABLE( main blind.cu buildPyramid.cu coarseToFine.cu conv.cu dec.cu GetGradK.cu GPUConvolve.cu gradTVcc.cu helper.cu KernelProjection.cu main.cu MaxFinder.cu NonConvexOptimization.cu scalarMult.cu SubtractAB.cu )
+
+TARGET_LINK_LIBRARIES(main ${OpenCV_LIBS} ${CUDA_LIBS})
+CUDA_ADD_CUBLAS_TO_TARGET(main)
 
